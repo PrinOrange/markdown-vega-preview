@@ -1,0 +1,15 @@
+.vega-figure > svg, .vega-loading > svg  {
+	margin: auto;
+	max-width: 100%;
+	height: auto;
+	display: block;
+}
+
+.vega-error  {
+	margin: auto;
+	max-width: 100%;
+	height: auto;
+  color: red;
+  font-size: 1em;
+	display: block;
+}
