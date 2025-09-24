@@ -52,5 +52,6 @@
     "vega": "^6.2.0",
     "vega-lite": "^6.4.1"
   },
+  "publisher": "PrinOrange",
   "icon": "./docs/vega.ico"
 }
