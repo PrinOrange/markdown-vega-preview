@@ -2,7 +2,7 @@
   "name": "markdown-vega-preview",
   "displayName": "markdown-vega-preview",
   "description": "Render the vega or vega-lite graphs in your markdown preview.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "type": "module",
   "repository": {
     "type": "git",
