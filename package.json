@@ -4,6 +4,10 @@
   "description": "Render the vega or vega-lite graphs in your markdown preview.",
   "version": "0.0.1",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PrinOrange/markdown-vega-preview"
+  },
   "engines": {
     "vscode": "^1.104.0"
   },
@@ -20,23 +24,6 @@
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "./styles/style.css"
-    ],
-    "languages": [
-      {
-        "id": "json",
-        "aliases": [
-          "Vega",
-          "vega",
-          "Vega-Lite",
-          "vega-lite"
-        ]
-      }
-    ],
-    "commands": [
-      {
-        "command": "markdown-vega-preview.helloWorld",
-        "title": "Hello World"
-      }
     ]
   },
   "scripts": {
@@ -64,5 +51,6 @@
     "markdown-it": "^14.1.0",
     "vega": "^6.2.0",
     "vega-lite": "^6.4.1"
-  }
+  },
+  "icon": "./docs/vega.ico"
 }

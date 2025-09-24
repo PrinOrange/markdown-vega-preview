@@ -4,33 +4,33 @@ import * as vega from 'vega';
 import { compile } from 'vega-lite';
 
 export function activate(_context: vscode.ExtensionContext) {
-	// 缓存渲染结果，使用内容哈希作为键
+	// Cache rendering results, using content hash as the key
 	const chartCache = new Map<string, { svg: string | null, promise: Promise<string> | null }>();
 
-	// 生成内容的唯一哈希
+	// Generate a unique hash for the content
 	function getContentHash(content: string): string {
 		let hash = 0;
 		for (let i = 0; i < content.length; i++) {
 			const char = content.charCodeAt(i);
 			hash = ((hash << 5) - hash) + char;
-			hash = hash & hash; // 转换为32位整数
+			hash = hash & hash; // Convert to 32-bit integer
 		}
 		return hash.toString();
 	}
 
-	// 渲染Vega规范
+	// Render Vega specification
 	async function renderVega(spec: any) {
 		const runtime = vega.parse(spec);
 		const view = new vega.View(runtime, {
 			renderer: "none",
-			logLevel: vega.Warn // 只显示警告及以上级别的日志
+			logLevel: vega.Warn // Show only warnings and above
 		});
 		return view.toSVG();
 	}
 
-	// 渲染Vega-Lite规范（先编译为Vega）
+	// Render Vega-Lite specification (compile to Vega first)
 	async function renderVegaLite(spec: any) {
-		// 将Vega-Lite规范编译为Vega规范
+		// Compile Vega-Lite spec into Vega spec
 		const vegaSpec = compile(spec).spec;
 		return renderVega(vegaSpec);
 	}
@@ -47,37 +47,37 @@ export function activate(_context: vscode.ExtensionContext) {
 				const lang = token.info.trim().toLowerCase();
 				token.info = "json";
 
-				// 只处理 vega 和 vega-lite 代码块
+				// Only handle vega and vega-lite code blocks
 				if (!['vega', 'vega-lite'].includes(lang)) {
 					return defaultFence(tokens, idx, options, env, self);
 				}
 
 				try {
 					const content = token.content;
-					// 使用语言类型 + 内容生成哈希，避免不同类型但内容相同的缓存冲突
+					// Use language type + content hash to avoid cache conflicts between different types with the same content
 					const hash = `${lang}-${getContentHash(content)}`;
 					const spec = JSON.parse(content);
 
-					// 检查缓存
+					// Check cache
 					if (chartCache.has(hash)) {
 						const cacheEntry = chartCache.get(hash)!;
-						// 如果已有渲染结果，直接返回
+						// If a rendered result exists, return it directly
 						if (cacheEntry.svg) {
 							return `<figure class="vega-figure">${cacheEntry.svg}</figure>`;
 						}
-						// 如果正在渲染中，返回加载占位符
+						// If rendering is in progress, return a loading placeholder
 						return `<figure class="vega-loading">Rendering ${lang} chart...</figure>`;
 					}
 
-					// 根据类型选择不同的渲染函数
+					// Choose rendering function based on type
 					const renderFunction = lang === 'vega' ? renderVega : renderVegaLite;
 
-					// 没有缓存，开始渲染
+					// No cache found, start rendering
 					const promise = renderFunction(spec)
 						.then(svg => {
-							// 更新缓存
+							// Update cache
 							chartCache.set(hash, { svg, promise: null });
-							// 触发重新渲染
+							// Trigger re-render
 							vscode.commands.executeCommand('markdown.preview.refresh');
 							return svg;
 						})
@@ -91,10 +91,10 @@ export function activate(_context: vscode.ExtensionContext) {
 							return '';
 						});
 
-					// 存储正在进行的渲染任务
+					// Store ongoing rendering task
 					chartCache.set(hash, { svg: null, promise });
 
-					// 第一次渲染返回加载状态
+					// Return loading state on first render
 					return `<figure class="vega-loading">Loading ${lang} chart...</figure>`;
 
 				} catch (err) {
