@@ -2,38 +2,126 @@ import * as vscode from 'vscode';
 import type markdownIt from "markdown-it";
 import * as vega from 'vega';
 import { compile } from 'vega-lite';
+import { createHash } from 'crypto'; // Used for more efficient hash calculation
+
+// Cache entry interface
+interface CacheEntry {
+	svg: string | null;
+	promise: Promise<string> | null;
+	timestamp: number;
+	accessCount: number; // Access count, used for LRU strategy
+}
 
 export function activate(_context: vscode.ExtensionContext) {
-	// Cache rendering results, using content hash as the key
-	const chartCache = new Map<string, { svg: string | null, promise: Promise<string> | null }>();
+	const chartCache = new Map<string, CacheEntry>();
 
-	// Generate a unique hash for the content
-	function getContentHash(content: string): string {
-		let hash = 0;
-		for (let i = 0; i < content.length; i++) {
-			const char = content.charCodeAt(i);
-			hash = ((hash << 5) - hash) + char;
-			hash = hash & hash; // Convert to 32-bit integer
-		}
-		return hash.toString();
+	// Configurable cache parameters
+	const CACHE_MAX_SIZE = 20; // Reduce maximum cache size to balance memory usage
+	const CACHE_TTL = 15 * 60 * 1000; // Shorten expiration time to 15 minutes
+	const RENDER_TIMEOUT = 300000; // Rendering timeout (300 seconds)
+
+	// Optimization 1: Use more efficient hash algorithm (replace simple hash)
+	function getContentHash(content: string, lang: string): string {
+		// Combine language, content, and version to generate hash, avoid cache conflicts after version upgrades
+		return createHash('md5')
+			.update(`v1:${lang}:${content}`)
+			.digest('hex');
 	}
 
-	// Render Vega specification
+	// Optimization 2: LRU + access frequency mixed cleanup strategy
+	function cleanupCache() {
+		if (chartCache.size <= CACHE_MAX_SIZE) { return; }
+
+		const now = Date.now();
+		const entries = Array.from(chartCache.entries());
+		const validEntries = entries.filter(([_, entry]) =>
+			now - entry.timestamp <= CACHE_TTL
+		);
+
+		// Remove all expired items
+		entries.forEach(([key, entry]) => {
+			if (now - entry.timestamp > CACHE_TTL) {
+				chartCache.delete(key);
+			}
+		});
+
+		// Sort valid entries by "access frequency + timestamp", keep more valuable cache entries
+		if (validEntries.length > CACHE_MAX_SIZE) {
+			validEntries.sort((a, b) => {
+				// Prefer to keep entries with higher access count, then more recently accessed
+				if (a[1].accessCount !== b[1].accessCount) {
+					return b[1].accessCount - a[1].accessCount;
+				}
+				return b[1].timestamp - a[1].timestamp;
+			});
+
+			// Remove lower-ranked cache entries
+			validEntries.slice(CACHE_MAX_SIZE).forEach(([key]) => {
+				chartCache.delete(key);
+			});
+		}
+	}
+
+	// Optimization 3: Share rendering tasks to avoid duplicate rendering of the same content
+	function getOrCreateRenderPromise(hash: string, renderFn: () => Promise<string>): Promise<string> {
+		const existing = chartCache.get(hash);
+		if (existing?.promise) {
+			return existing.promise; // Return existing render task to avoid duplicate computation
+		}
+
+		// Add timeout control
+		const promise = Promise.race([
+			renderFn(),
+			new Promise<string>((_, reject) =>
+				setTimeout(() => reject(new Error('Rendering timed out')), RENDER_TIMEOUT)
+			)
+		]);
+
+		chartCache.set(hash, {
+			svg: null,
+			promise,
+			timestamp: Date.now(),
+			accessCount: 1
+		});
+
+		return promise;
+	}
+
+	// Optimization 4: Vega render configuration optimization
 	async function renderVega(spec: any) {
 		const runtime = vega.parse(spec);
 		const view = new vega.View(runtime, {
 			renderer: "none",
-			logLevel: vega.Warn // Show only warnings and above
+			logLevel: vega.Error, // Only show error logs to reduce IO
 		});
+
 		return view.toSVG();
 	}
 
-	// Render Vega-Lite specification (compile to Vega first)
+	// Optimization 5: Vega-Lite compile cache
+	const liteCompileCache = new Map<string, any>();
 	async function renderVegaLite(spec: any) {
-		// Compile Vega-Lite spec into Vega spec
+		const specStr = JSON.stringify(spec);
+		// Check compile cache first
+		if (liteCompileCache.has(specStr)) {
+			return renderVega(liteCompileCache.get(specStr));
+		}
+
+		// Compile and cache result
 		const vegaSpec = compile(spec).spec;
+		liteCompileCache.set(specStr, vegaSpec);
+
+		// Limit compile cache size
+		if (liteCompileCache.size > 20) {
+			const oldestKey = Array.from(liteCompileCache.keys()).shift();
+			if (oldestKey) { liteCompileCache.delete(oldestKey); }
+		}
+
 		return renderVega(vegaSpec);
 	}
+
+	// Optimization 6: Reduce cleanup frequency to reduce performance overhead
+	const cleanupInterval = setInterval(cleanupCache, 30 * 60 * 1000); // Once every 30 minutes
 
 	return {
 		extendMarkdownIt(md: markdownIt) {
@@ -47,37 +135,50 @@ export function activate(_context: vscode.ExtensionContext) {
 				const lang = token.info.trim().toLowerCase();
 				token.info = "json";
 
-				// Only handle vega and vega-lite code blocks
 				if (!['vega', 'vega-lite'].includes(lang)) {
 					return defaultFence(tokens, idx, options, env, self);
 				}
 
 				try {
 					const content = token.content;
-					// Use language type + content hash to avoid cache conflicts between different types with the same content
-					const hash = `${lang}-${getContentHash(content)}`;
-					const spec = JSON.parse(content);
+					const hash = getContentHash(content, lang);
 
-					// Check cache
+					// Optimization 7: Fast path - check cache before parsing JSON (parsing can be expensive)
 					if (chartCache.has(hash)) {
 						const cacheEntry = chartCache.get(hash)!;
-						// If a rendered result exists, return it directly
+						// Update cache metrics
+						cacheEntry.timestamp = Date.now();
+						cacheEntry.accessCount++;
+						chartCache.set(hash, cacheEntry);
+
 						if (cacheEntry.svg) {
 							return `<figure class="vega-figure">${cacheEntry.svg}</figure>`;
 						}
-						// If rendering is in progress, return a loading placeholder
 						return `<figure class="vega-loading">Rendering ${lang} chart...</figure>`;
 					}
 
-					// Choose rendering function based on type
-					const renderFunction = lang === 'vega' ? renderVega : renderVegaLite;
+					// Lazy parse JSON (only when cache miss)
+					const spec = JSON.parse(content);
 
-					// No cache found, start rendering
-					const promise = renderFunction(spec)
+					// Perform lightweight cleanup (just check size, no sorting)
+					if (chartCache.size > CACHE_MAX_SIZE * 1.5) {
+						cleanupCache();
+					}
+
+					// Select render function
+					const renderFn = lang === 'vega'
+						? () => renderVega(spec)
+						: () => renderVegaLite(spec);
+
+					// Get or create render task
+					const promise = getOrCreateRenderPromise(hash, renderFn)
 						.then(svg => {
-							// Update cache
-							chartCache.set(hash, { svg, promise: null });
-							// Trigger re-render
+							chartCache.set(hash, {
+								svg,
+								promise: null,
+								timestamp: Date.now(),
+								accessCount: 1
+							});
 							vscode.commands.executeCommand('markdown.preview.refresh');
 							return svg;
 						})
@@ -85,16 +186,14 @@ export function activate(_context: vscode.ExtensionContext) {
 							console.error(`${lang} rendering error:`, err);
 							chartCache.set(hash, {
 								svg: `<div class="vega-error">${err.message}</div>`,
-								promise: null
+								promise: null,
+								timestamp: Date.now(),
+								accessCount: 1
 							});
 							vscode.commands.executeCommand('markdown.preview.refresh');
 							return '';
 						});
 
-					// Store ongoing rendering task
-					chartCache.set(hash, { svg: null, promise });
-
-					// Return loading state on first render
 					return `<figure class="vega-loading">Loading ${lang} chart...</figure>`;
 
 				} catch (err) {
@@ -107,4 +206,10 @@ export function activate(_context: vscode.ExtensionContext) {
 	};
 }
 
-export function deactivate() { }
+export function deactivate() {
+	if (cleanupInterval) {
+		clearInterval(cleanupInterval);
+	}
+}
+
+let cleanupInterval: NodeJS.Timeout;
