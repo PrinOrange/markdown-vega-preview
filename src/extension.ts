@@ -3,6 +3,7 @@ import type markdownIt from "markdown-it";
 import * as vega from 'vega';
 import { compile } from 'vega-lite';
 import { createHash } from 'crypto'; // Used for more efficient hash calculation
+import jsonc from 'jsonc-parser';
 
 // Cache entry interface
 interface CacheEntry {
@@ -133,11 +134,12 @@ export function activate(_context: vscode.ExtensionContext) {
 			md.renderer.rules.fence = (tokens, idx, options, env, self) => {
 				const token = tokens[idx];
 				const lang = token.info.trim().toLowerCase();
-				token.info = "json";
 
 				if (!['vega', 'vega-lite'].includes(lang)) {
 					return defaultFence(tokens, idx, options, env, self);
 				}
+
+				token.info = "json";
 
 				try {
 					const content = token.content;
@@ -158,7 +160,7 @@ export function activate(_context: vscode.ExtensionContext) {
 					}
 
 					// Lazy parse JSON (only when cache miss)
-					const spec = JSON.parse(content);
+					const spec = jsonc.parse(content);
 
 					// Perform lightweight cleanup (just check size, no sorting)
 					if (chartCache.size > CACHE_MAX_SIZE * 1.5) {

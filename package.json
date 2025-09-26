@@ -24,6 +24,29 @@
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "./styles/style.css"
+    ],
+    "languages": [
+      {
+        "id": "vega",
+        "aliases": [
+          "vega-lite"
+        ],
+        "extensions": [
+          ".vg",
+          ".vl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "vega",
+        "scopeName": "source.json.comments",
+        "path": "./syntaxes/jsonc.tmLanguage.json",
+        "embeddedLanguages": {
+          "vega": "source.json.comments"
+        }
+      }
     ]
   },
   "scripts": {
@@ -50,6 +73,7 @@
   },
   "packageManager": "npm@11.6.0",
   "dependencies": {
+    "jsonc-parser": "^3.3.1",
     "markdown-it": "^14.1.0",
     "vega": "^6.2.0",
     "vega-lite": "^6.4.1"
